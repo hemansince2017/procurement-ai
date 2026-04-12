@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --app --no-eslint --no-git --import-alias '@/*' --skip-install)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "mcp__98487867-6428-413b-bee4-ce2fefad631a__list_projects",
+      "mcp__98487867-6428-413b-bee4-ce2fefad631a__get_publishable_keys",
+      "mcp__98487867-6428-413b-bee4-ce2fefad631a__execute_sql",
+      "Bash(npm run:*)",
+      "mcp__003fb596-8bfd-4868-ad2f-da2473a7bd3c__deploy_to_vercel",
+      "Bash(npx vercel:*)",
+      "mcp__98487867-6428-413b-bee4-ce2fefad631a__apply_migration",
+      "Bash(gh auth:*)",
+      "Bash(git --version)",
+      "Bash(git config:*)",
+      "Read(//Users/sumihemansiyu/**)"
+    ]
+  }
+}
