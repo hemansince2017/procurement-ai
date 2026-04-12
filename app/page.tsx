@@ -22,8 +22,8 @@ type Contract = {
 const categoryColors: Record<string, string> = {
   SaaS: "bg-blue-50 text-blue-700 ring-1 ring-blue-100",
   "Cloud Infrastructure": "bg-violet-50 text-violet-700 ring-1 ring-violet-100",
-  "Professional Services": "bg-amber-50 text-amber-700 ring-1 ring-amber-100",
-  Hardware: "bg-slate-50 text-slate-600 ring-1 ring-slate-200",
+  Security: "bg-orange-50 text-orange-700 ring-1 ring-orange-100",
+  DevTools: "bg-teal-50 text-teal-700 ring-1 ring-teal-100",
 };
 
 function ScoreBadge({ score }: { score: number }) {

@@ -210,7 +210,12 @@ export default function ContractDetailPage() {
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-blue-100">
+                <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${
+                  contract.category === "Cloud Infrastructure" ? "bg-violet-50 text-violet-700 ring-violet-100" :
+                  contract.category === "Security" ? "bg-orange-50 text-orange-700 ring-orange-100" :
+                  contract.category === "DevTools" ? "bg-teal-50 text-teal-700 ring-teal-100" :
+                  "bg-blue-50 text-blue-700 ring-blue-100"
+                }`}>
                   {contract.category}
                 </span>
                 {contract.auto_renewal_clause && days <= 90 && (
