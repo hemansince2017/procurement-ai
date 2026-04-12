@@ -15,6 +15,7 @@ type Contract = {
   end_date: string;
   auto_renewal_clause: boolean;
   usage_data: { utilization_percentage: number; usage_trend: string }[];
+  market_analysis: { price_index: number }[];
   sentiment: { satisfaction_score: number }[];
   ai_recommendations: { score: number; risk_flags: string[] }[];
 };
@@ -70,7 +71,7 @@ export default function DashboardPage() {
       if (!session) { router.push("/login"); return; }
       const { data } = await supabase
         .from("contracts")
-        .select("*, usage_data(*), sentiment(*), ai_recommendations(*)");
+        .select("*, usage_data(*), market_analysis(*), sentiment(*), ai_recommendations(*)");
       setContracts((data as Contract[]) || []);
       setLoading(false);
     };
@@ -100,6 +101,16 @@ export default function DashboardPage() {
   const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b) / scores.length) : 0;
   const highPriority = scores.filter((s) => s >= 65).length;
   const autoRenewing = contracts.filter((c) => c.auto_renewal_clause && daysUntil(c.end_date) <= 90).length;
+
+  // Savings opportunity: sum of overpayment across above-market high-priority contracts
+  const savingsContracts = contracts
+    .filter((c) => (c.ai_recommendations?.[0]?.score ?? 0) >= 55 && (c.market_analysis?.[0]?.price_index ?? 0) > 0)
+    .sort((a, b) => (b.ai_recommendations?.[0]?.score ?? 0) - (a.ai_recommendations?.[0]?.score ?? 0))
+    .slice(0, 4);
+  const estimatedSavings = savingsContracts.reduce((sum, c) => {
+    const overpayPct = (c.market_analysis?.[0]?.price_index ?? 0) / 100;
+    return sum + c.contract_value * overpayPct;
+  }, 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -158,28 +169,32 @@ export default function DashboardPage() {
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
             <p className="text-xs font-medium text-gray-500">Portfolio Value</p>
             <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{formatCurrency(totalValue)}</p>
-            <p className="mt-0.5 text-xs text-gray-400">{contracts.length} active contracts</p>
+            <p className="mt-0.5 text-xs text-gray-400">{contracts.length} contracts</p>
+          </div>
+          <div className={`rounded-lg border px-4 py-3 shadow-sm ${estimatedSavings > 0 ? "border-emerald-200 bg-emerald-50" : "border-gray-200 bg-white"}`}>
+            <p className={`text-xs font-medium ${estimatedSavings > 0 ? "text-emerald-700" : "text-gray-500"}`}>
+              Savings Opportunity
+            </p>
+            <p className={`mt-1 text-2xl font-bold tracking-tight ${estimatedSavings > 0 ? "text-emerald-700" : "text-gray-900"}`}>
+              {formatCurrency(estimatedSavings)}
+            </p>
+            <p className={`mt-0.5 text-xs ${estimatedSavings > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+              top {savingsContracts.length} above-market contracts
+            </p>
           </div>
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
             <p className="text-xs font-medium text-gray-500">High Priority</p>
             <p className="mt-1 text-2xl font-bold tracking-tight text-red-600">{highPriority}</p>
-            <p className="mt-0.5 text-xs text-gray-400">Score ≥ 65 — act now</p>
+            <p className="mt-0.5 text-xs text-gray-400">score ≥ 65 · act now</p>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-medium text-gray-500">Avg. Renewal Score</p>
-            <p className={`mt-1 text-2xl font-bold tracking-tight ${avgScore >= 65 ? "text-red-600" : avgScore >= 35 ? "text-amber-600" : "text-emerald-600"}`}>
-              {avgScore}
-            </p>
-            <p className="mt-0.5 text-xs text-gray-400">out of 100</p>
-          </div>
-          <div className={`rounded-lg border px-4 py-3 shadow-sm ${autoRenewing > 0 ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}>
-            <p className={`text-xs font-medium ${autoRenewing > 0 ? "text-red-500" : "text-gray-500"}`}>
+          <div className={`rounded-lg border px-4 py-3 shadow-sm ${autoRenewing > 0 ? "border-amber-200 bg-amber-50" : "border-gray-200 bg-white"}`}>
+            <p className={`text-xs font-medium ${autoRenewing > 0 ? "text-amber-700" : "text-gray-500"}`}>
               Auto-Renewing Soon
             </p>
-            <p className={`mt-1 text-2xl font-bold tracking-tight ${autoRenewing > 0 ? "text-red-600" : "text-gray-900"}`}>
+            <p className={`mt-1 text-2xl font-bold tracking-tight ${autoRenewing > 0 ? "text-amber-700" : "text-gray-900"}`}>
               {autoRenewing}
             </p>
-            <p className={`mt-0.5 text-xs ${autoRenewing > 0 ? "text-red-400" : "text-gray-400"}`}>within 90 days</p>
+            <p className={`mt-0.5 text-xs ${autoRenewing > 0 ? "text-amber-600" : "text-gray-400"}`}>within 90 days</p>
           </div>
         </div>
 
@@ -309,26 +324,41 @@ export default function DashboardPage() {
 
         {/* Risk pipeline */}
         {scores.length > 0 && (
-          <div className="mt-4 rounded-lg border border-gray-200 bg-white px-4 py-3.5 shadow-sm">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Renewal Risk Pipeline</h2>
-            <div className="flex gap-2 overflow-x-auto pb-0.5">
-              {sorted
+          <div className="mt-4 rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs font-semibold text-gray-700">Renewal Risk Pipeline</h2>
+                {highPriority > 0 && (
+                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                    {highPriority} urgent
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-gray-400">Sorted by AI score · click to open</span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto px-4 py-3">
+              {[...contracts]
                 .filter((c) => c.ai_recommendations?.[0]?.score !== undefined)
                 .sort((a, b) => (b.ai_recommendations?.[0]?.score ?? 0) - (a.ai_recommendations?.[0]?.score ?? 0))
-                .slice(0, 10)
+                .slice(0, 12)
                 .map((c) => {
                   const s = c.ai_recommendations[0].score;
                   const lv = getRiskLevel(s);
+                  const days = daysUntil(c.end_date);
                   return (
-                    <Link key={c.id} href={`/contracts/${c.id}`}>
-                      <div className={`min-w-[96px] cursor-pointer rounded-md border px-3 py-2.5 transition-all hover:shadow-sm ${
-                        lv === "high" ? "border-red-100 bg-red-50" : lv === "medium" ? "border-amber-100 bg-amber-50" : "border-emerald-100 bg-emerald-50"
+                    <Link key={c.id} href={`/contracts/${c.id}`} className="flex-shrink-0">
+                      <div className={`w-[108px] cursor-pointer rounded-md border px-3 py-2.5 transition-all hover:shadow-md ${
+                        lv === "high" ? "border-red-200 bg-red-50 hover:border-red-300" :
+                        lv === "medium" ? "border-amber-200 bg-amber-50 hover:border-amber-300" :
+                        "border-emerald-200 bg-emerald-50 hover:border-emerald-300"
                       }`}>
-                        <p className="truncate text-xs font-medium text-gray-700">{c.vendor_name}</p>
-                        <p className={`mt-0.5 text-xl font-bold tabular-nums leading-none ${
+                        <p className="truncate text-xs font-semibold text-gray-800">{c.vendor_name}</p>
+                        <p className={`mt-1 text-2xl font-bold tabular-nums leading-none ${
                           lv === "high" ? "text-red-600" : lv === "medium" ? "text-amber-600" : "text-emerald-600"
                         }`}>{s}</p>
-                        <p className="mt-0.5 text-xs text-gray-400">{c.category.split(" ")[0]}</p>
+                        <p className="mt-1.5 text-[10px] text-gray-500">
+                          {days < 0 ? "Expired" : days <= 90 ? `${days}d left` : c.category.split(" ")[0]}
+                        </p>
                       </div>
                     </Link>
                   );

@@ -52,10 +52,27 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
-function StatRow({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+function Tooltip({ text }: { text: string }) {
+  return (
+    <span className="group relative ml-1 inline-flex">
+      <svg className="h-3 w-3 text-gray-300 hover:text-gray-500 cursor-default" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 w-48 -translate-x-1/2 rounded-md bg-gray-900 px-2.5 py-1.5 text-[11px] leading-relaxed text-gray-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+        {text}
+        <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+      </span>
+    </span>
+  );
+}
+
+function StatRow({ label, value, sub, tooltip }: { label: string; value: React.ReactNode; sub?: string; tooltip?: string }) {
   return (
     <div className="flex items-center justify-between py-1.5">
-      <span className="text-xs text-gray-500">{label}</span>
+      <span className="flex items-center text-xs text-gray-500">
+        {label}
+        {tooltip && <Tooltip text={tooltip} />}
+      </span>
       <div className="text-right">
         <div className="text-xs font-medium text-gray-900">{value}</div>
         {sub && <div className="text-[10px] text-gray-400">{sub}</div>}
@@ -194,12 +211,23 @@ export default function ContractDetailPage() {
               <span className="text-gray-300">/</span>
               <span className="text-sm font-medium text-gray-900">{contract.vendor_name}</span>
             </div>
-            <Link
-              href={`/contracts/${id}/edit`}
-              className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              Edit
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors print:hidden"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export PDF
+              </button>
+              <Link
+                href={`/contracts/${id}/edit`}
+                className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors print:hidden"
+              >
+                Edit
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -317,19 +345,31 @@ export default function ContractDetailPage() {
               >
                 {market ? (
                   <div className="divide-y divide-gray-50">
-                    <StatRow label="vs Market" value={
-                      <Chip variant={marketVariant(market.market_rate_comparison)}>
-                        {market.market_rate_comparison === "above" ? "Above" : market.market_rate_comparison === "below" ? "Below" : "At market"}
-                      </Chip>
-                    } />
-                    <StatRow label="Price Index" value={
-                      <span className={market.price_index > 0 ? "text-red-600" : market.price_index < 0 ? "text-emerald-600" : "text-gray-600"}>
-                        {market.price_index > 0 ? "+" : ""}{market.price_index}%
-                      </span>
-                    } />
-                    <StatRow label="Vendor Health" value={
-                      <Chip variant={healthVariant(market.vendor_financial_health)}>{market.vendor_financial_health}</Chip>
-                    } />
+                    <StatRow
+                      label="vs Market"
+                      tooltip="Compares your contract rate to published list prices and peer-reported rates for comparable software in this category."
+                      value={
+                        <Chip variant={marketVariant(market.market_rate_comparison)}>
+                          {market.market_rate_comparison === "above" ? "Above" : market.market_rate_comparison === "below" ? "Below" : "At market"}
+                        </Chip>
+                      }
+                    />
+                    <StatRow
+                      label="Price Index"
+                      tooltip="Estimated % above or below the market benchmark rate. Positive = you're paying more than peers; negative = you're paying less."
+                      value={
+                        <span className={market.price_index > 0 ? "text-red-600" : market.price_index < 0 ? "text-emerald-600" : "text-gray-600"}>
+                          {market.price_index > 0 ? "+" : ""}{market.price_index}%
+                        </span>
+                      }
+                    />
+                    <StatRow
+                      label="Vendor Health"
+                      tooltip="Vendor financial stability based on SEC EDGAR filings — revenue trend, gross margin, and cash position from the most recent 10-K/10-Q."
+                      value={
+                        <Chip variant={healthVariant(market.vendor_financial_health)}>{market.vendor_financial_health}</Chip>
+                      }
+                    />
                   </div>
                 ) : <p className="text-xs text-gray-400">No data</p>}
               </SignalCard>

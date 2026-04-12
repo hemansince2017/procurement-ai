@@ -9,10 +9,34 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
 );
 
+// Product/edition words that should be stripped before searching EDGAR
+// e.g. "Snowflake Data Cloud" → "Snowflake", "CrowdStrike Falcon" → "CrowdStrike"
+const STRIP_WORDS = new Set([
+  "data", "cloud", "suite", "enterprise", "platform", "services", "service",
+  "identity", "falcon", "hcm", "itsm", "crm", "erp", "ai", "pro", "plus",
+  "one", "hub", "360", "365", "studio", "online", "web", "app", "apps",
+  "software", "solutions", "solution", "technologies", "technology", "systems",
+  "system", "group", "inc", "corp", "llc", "ltd", "co",
+]);
+
+function normalizeVendorName(name: string): string {
+  // Remove common product/edition suffixes to get the core company name
+  const words = name.toLowerCase().trim().split(/\s+/);
+  // Keep leading words until we hit a pure strip-word
+  const coreWords: string[] = [];
+  for (const w of words) {
+    if (STRIP_WORDS.has(w) && coreWords.length > 0) break;
+    if (!STRIP_WORDS.has(w)) coreWords.push(w);
+  }
+  return (coreWords.length > 0 ? coreWords : words).join(" ");
+}
+
 // Search SEC EDGAR for a company using the company tickers JSON (most reliable)
 async function searchEdgarCompany(query: string) {
   const headers = { "User-Agent": "ContractAI procurement-ai-app@demo.com" };
   const queryLower = query.toLowerCase().trim();
+  // Also try with product words stripped (e.g. "Snowflake Data Cloud" → "snowflake")
+  const normalizedQuery = normalizeVendorName(query);
 
   // Fetch SEC's full company tickers index (~1MB, has every public company)
   const res = await fetch("https://www.sec.gov/files/company_tickers.json", { headers });
@@ -22,25 +46,33 @@ async function searchEdgarCompany(query: string) {
 
   const entries = Object.values(data);
 
-  // 1. Exact name match
-  let match = entries.find((e) => e.title.toLowerCase() === queryLower);
+  // 1. Exact name match (original or normalized)
+  let match = entries.find((e) => e.title.toLowerCase() === queryLower)
+    ?? entries.find((e) => e.title.toLowerCase() === normalizedQuery);
 
   // 2. Exact ticker match
-  if (!match) match = entries.find((e) => e.ticker.toLowerCase() === queryLower);
+  if (!match) match = entries.find((e) => e.ticker.toLowerCase() === queryLower)
+    ?? entries.find((e) => e.ticker.toLowerCase() === normalizedQuery);
 
-  // 3. Name starts-with match
-  if (!match) match = entries.find((e) => e.title.toLowerCase().startsWith(queryLower));
+  // 3. Name starts-with (normalized first — more precise)
+  if (!match) match = entries.find((e) => e.title.toLowerCase().startsWith(normalizedQuery))
+    ?? entries.find((e) => e.title.toLowerCase().startsWith(queryLower));
 
   // 4. Name contains all words in query
   if (!match) {
-    const words = queryLower.split(/\s+/).filter(Boolean);
+    const words = normalizedQuery.split(/\s+/).filter(Boolean);
     match = entries.find((e) => words.every((w) => e.title.toLowerCase().includes(w)));
   }
 
-  // 5. Name contains any significant word (>= 4 chars)
+  // 5. Try each significant word longest-first so "snowflake" (9) wins over "data" (4)
   if (!match) {
-    const words = queryLower.split(/\s+/).filter((w) => w.length >= 4);
-    match = entries.find((e) => words.some((w) => e.title.toLowerCase().includes(w)));
+    const words = normalizedQuery.split(/\s+/)
+      .filter((w) => w.length >= 4)
+      .sort((a, b) => b.length - a.length);
+    for (const word of words) {
+      const found = entries.find((e) => e.title.toLowerCase().includes(word));
+      if (found) { match = found; break; }
+    }
   }
 
   if (!match) throw new Error(`"${query}" not found in SEC EDGAR. Try the full legal name (e.g. "Akamai Technologies" or ticker "AKAM").`);
