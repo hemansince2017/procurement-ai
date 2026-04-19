@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
-  variant?: "primary" | "secondary" | "outline" | "danger";
+  variant?: "primary" | "secondary" | "outline" | "danger" | "ghost";
   size?: "sm" | "md" | "lg";
 }
 
@@ -14,29 +14,37 @@ export function Button({
   className,
   ...props
 }: ButtonProps) {
-  const baseStyles =
-    "font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2";
+  // Vercel design: 3 weights only (400/500/600), radius 6px, no heavy shadows
+  const base =
+    "inline-flex items-center justify-center font-medium rounded-[6px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-[hsla(212,100%,48%,1)] disabled:opacity-50 disabled:pointer-events-none select-none";
 
   const variants = {
+    // Dark primary — Vercel Black
     primary:
-      "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 disabled:bg-gray-400",
+      "bg-[#171717] text-white hover:bg-[#2a2a2a] active:bg-[#111111]",
+    // Shadow-bordered secondary — white with ring-border
     secondary:
-      "bg-gray-200 text-gray-900 hover:bg-gray-300 focus:ring-gray-500 disabled:bg-gray-300",
+      "bg-white text-[#171717] shadow-border hover:bg-[#fafafa] active:bg-[#f5f5f5]",
+    // Outline matches secondary
     outline:
-      "border border-gray-300 text-gray-900 hover:bg-gray-50 focus:ring-blue-500",
+      "bg-white text-[#171717] shadow-border hover:bg-[#fafafa]",
+    // Danger
     danger:
-      "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 disabled:bg-gray-400",
+      "bg-red-600 text-white hover:bg-red-700 active:bg-red-800",
+    // Ghost — no border, no bg
+    ghost:
+      "bg-transparent text-[#4d4d4d] hover:bg-[#fafafa] hover:text-[#171717]",
   };
 
   const sizes = {
-    sm: "px-3 py-1.5 text-sm",
-    md: "px-4 py-2 text-base",
-    lg: "px-6 py-3 text-lg",
+    sm: "h-7 px-3 text-xs gap-1.5",
+    md: "h-9 px-4 text-sm gap-2",
+    lg: "h-11 px-6 text-base gap-2.5",
   };
 
   return (
     <button
-      className={cn(baseStyles, variants[variant], sizes[size], className)}
+      className={cn(base, variants[variant], sizes[size], className)}
       {...props}
     >
       {children}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { AppShell } from "@/components/shared/AppShell";
 
 const CATEGORIES = ["SaaS", "Cloud Infrastructure", "Professional Services", "Hardware"] as const;
 const PAYMENT_TERMS = ["Annual", "Quarterly", "Monthly", "Net 30", "Net 45", "Net 60"];
@@ -78,24 +79,8 @@ export default function NewContractPage() {
   const labelClass = "block text-sm font-medium text-gray-700 mb-1.5";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto max-w-3xl px-6 py-4">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700">
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Dashboard
-            </Link>
-            <span className="text-gray-300">/</span>
-            <span className="text-sm font-medium text-gray-900">Add Contract</span>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl px-6 py-8">
+    <AppShell>
+      <main className="mx-auto max-w-2xl w-full px-6 py-8">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Add New Contract</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -371,6 +356,6 @@ export default function NewContractPage() {
           </div>
         </form>
       </main>
-    </div>
+    </AppShell>
   );
 }

@@ -157,6 +157,130 @@ function calcYoY(current: number, prior: number) {
   return Math.round(((current - prior) / Math.abs(prior)) * 1000) / 10;
 }
 
+function parseFiscalYearEnd(mmdd: string | undefined): string {
+  if (!mmdd || mmdd.length !== 4) return "";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const month = parseInt(mmdd.slice(0, 2), 10);
+  const day = parseInt(mmdd.slice(2, 4), 10);
+  if (month < 1 || month > 12) return "";
+  return `${months[month - 1]} ${day}`;
+}
+
+// ── Shared JSON parse + repair ────────────────────────────────
+function parseClaudeJSON(rawText: string): Record<string, unknown> {
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Claude returned invalid JSON");
+  let jsonStr = jsonMatch[0];
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    const opens = (jsonStr.match(/\[/g) || []).length;
+    const closes = (jsonStr.match(/\]/g) || []).length;
+    const objOpens = (jsonStr.match(/\{/g) || []).length;
+    const objCloses = (jsonStr.match(/\}/g) || []).length;
+    jsonStr = jsonStr.replace(/,\s*$/, "").replace(/,\s*\{[^}]*$/, "");
+    jsonStr += "]".repeat(Math.max(0, opens - closes));
+    jsonStr += "}".repeat(Math.max(0, objOpens - objCloses));
+    return JSON.parse(jsonStr);
+  }
+}
+
+// ── Yahoo Finance data fetch ──────────────────────────────────
+async function fetchYahooData(ticker: string): Promise<{
+  eps: { period: string; actual: number }[];
+  analyst: { consensus: string; mean: number; count: number } | null;
+} | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=earningsHistory%2CfinancialData`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data?.quoteSummary?.result?.[0];
+    if (!result) return null;
+
+    const eps = (result.earningsHistory?.history ?? [])
+      .slice(0, 4)
+      .map((h: any) => ({ period: h.quarter?.fmt ?? "", actual: h.epsActual?.raw ?? null }))
+      .filter((h: any) => h.actual !== null)
+      .reverse(); // chronological order
+
+    const fd = result.financialData;
+    const analyst = fd?.recommendationKey ? {
+      consensus: fd.recommendationKey as string,
+      mean: fd.recommendationMean?.raw ?? null,
+      count: fd.numberOfAnalystOpinions?.raw ?? 0,
+    } : null;
+
+    return { eps, analyst };
+  } catch {
+    return null;
+  }
+}
+
+// ── Shared Claude JSON schema ─────────────────────────────────
+function buildIntelligenceSchema(opts: { hasYahoo: boolean; isPrivate: boolean }) {
+  const base = `{
+  "companyOverview": "<2-3 sentences on what the company does, value prop, and customer base>",
+  "products": ["<product/platform name>"],
+  "segments": [{ "name": "<segment name>", "revenueShare": <integer 0-100> }],
+  "executives": [{ "name": "<full name>", "title": "<title>" }],
+  "posture": "low" | "moderate" | "high",
+  "postureScore": <0-100>,
+  "postureLabel": "<2-4 word label>",
+  "narrative": "<2-3 sentences on negotiation dynamic>",
+  "topAction": "<1 tactical action before renewal>",
+  "levers": [{ "priority": "high"|"medium"|"low", "title": "<title>", "detail": "<1-2 sentences>", "action": "<action>" }],
+  "risks": [{ "priority": "high"|"medium"|"low", "title": "<title>", "detail": "<1-2 sentences>", "action": "<mitigation>" }],
+  "opportunities": [{ "priority": "high"|"medium"|"low", "title": "<title>", "detail": "<1-2 sentences>", "action": "<how to capture>" }]`;
+
+  const epsAnalyst = !opts.hasYahoo && !opts.isPrivate ? `,
+  "epsEstimates": [{ "period": "<YYYY-MM-DD>", "actual": <number> }],
+  "analystRating": { "consensus": "strongBuy"|"buy"|"hold"|"underperform"|"sell", "mean": <1.0-5.0>, "count": <integer>, "source": "ai" }` : "";
+
+  const funding = opts.isPrivate ? `,
+  "fundingInfo": { "estimatedValuation": "<string or null>", "lastRound": "<e.g. Series D - $400M (2021) or null>", "totalFunding": "<string or null>", "notableInvestors": ["<name>"], "note": "<1 sentence on reliability of this data>" }` : "";
+
+  return base + epsAnalyst + funding + "\n}";
+}
+
+const SCHEMA_RULES = `Rules:
+- products: 4-6 main product lines (short names)
+- segments: 3-5 BUs with revenueShare summing to 100
+- executives: exactly 4 — CEO, CFO, and 2 others (CTO/CPO/COO/President)
+- exactly 3 items each in levers, risks, opportunities
+- Respond with ONLY the JSON object, no other text`;
+
+// ── AI-only fallback (private/unlisted company) ───────────────
+async function generateAIOnlyIntelligence(company: string) {
+  const schema = buildIntelligenceSchema({ hasYahoo: false, isPrivate: true });
+  const prompt = `You are an expert enterprise procurement strategist. A procurement professional needs negotiation intelligence for a vendor contract with "${company}".
+
+This company is not publicly traded or not found in SEC EDGAR. Use your training knowledge to generate the most useful negotiation intelligence you can.
+
+Respond ONLY in valid JSON matching this exact structure:
+${schema}
+
+${SCHEMA_RULES}
+- For fundingInfo: include known funding rounds, valuation, and investors if the company is a known startup/private company; set fields to null if unknown
+- Base posture/narrative on known market position, competitive alternatives, and switching costs
+- Be honest in the narrative that this is AI-generated, not from audited financials`;
+
+  const aiResponse = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4096,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const rawText = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : "";
+  return parseClaudeJSON(rawText);
+}
+
 export async function GET(request: NextRequest) {
   const company = request.nextUrl.searchParams.get("company");
   if (!company) {
@@ -180,74 +304,76 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 1. Find company in EDGAR
-    const { cik, name: edgarName, ticker: edgarTicker } = await searchEdgarCompany(company);
+    // ── Try SEC EDGAR path ──────────────────────────────────────
+    let responseData: Record<string, unknown>;
 
-    // 2. Fetch meta + facts in parallel
-    const [meta, facts] = await Promise.all([
-      getCompanyMeta(cik),
-      getCompanyFacts(cik),
-    ]);
+    try {
+      // 1. Find company in EDGAR
+      const { cik, name: edgarName, ticker: edgarTicker } = await searchEdgarCompany(company);
 
-    const companyName = meta.name || edgarName;
-    const ticker = meta.tickers?.[0] || edgarTicker || "";
-    const sic = meta.sic || "";
-    const sicDesc = meta.sicDescription || "";
-    const stateOfInc = meta.stateOfIncorporation || "";
+      // 2. Fetch meta + facts in parallel
+      const [meta, facts] = await Promise.all([
+        getCompanyMeta(cik),
+        getCompanyFacts(cik),
+      ]);
 
-    // 3. Extract financials
-    const revenues = extractBestConcept(facts, [
-      "Revenues",
-      "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "SalesRevenueNet",
-      "RevenueFromContractWithCustomerIncludingAssessedTax",
-    ]);
-    const grossProfit = extractBestConcept(facts, ["GrossProfit"]);
-    const operatingIncome = extractBestConcept(facts, [
-      "OperatingIncomeLoss",
-      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-    ]);
-    const cash = extractBestConcept(facts, [
-      "CashAndCashEquivalentsAtCarryingValue",
-      "CashCashEquivalentsAndShortTermInvestments",
-      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-    ]);
-    const netIncome = extractBestConcept(facts, ["NetIncomeLoss"]);
+      const companyName = meta.name || edgarName;
+      const ticker = meta.tickers?.[0] || edgarTicker || "";
+      const sic = meta.sic || "";
+      const sicDesc = meta.sicDescription || "";
+      const stateOfInc = meta.stateOfIncorporation || "";
+      const fiscalYearEnd = parseFiscalYearEnd(meta.fiscalYearEnd);
 
-    const latestRevenue = revenues[0];
-    const priorRevenue = revenues[4] || revenues[3] || revenues[1];
-    const latestGross = grossProfit[0];
-    const latestOpInc = operatingIncome[0];
-    const latestCash = cash[0];
+      // 3. Extract financials
+      const revenues = extractBestConcept(facts, [
+        "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
+      ]);
+      const grossProfit = extractBestConcept(facts, ["GrossProfit"]);
+      const operatingIncome = extractBestConcept(facts, [
+        "OperatingIncomeLoss",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+      ]);
+      const cash = extractBestConcept(facts, [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsAndShortTermInvestments",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+      ]);
+      const netIncome = extractBestConcept(facts, ["NetIncomeLoss"]);
 
-    const revenueYoY = latestRevenue && priorRevenue
-      ? calcYoY(latestRevenue.value, priorRevenue.value)
-      : null;
+      const latestRevenue = revenues[0];
+      const priorRevenue = revenues[4] || revenues[3] || revenues[1];
+      const latestGross = grossProfit[0];
+      const latestOpInc = operatingIncome[0];
+      const latestCash = cash[0];
 
-    const grossMarginPct = latestRevenue && latestGross
-      ? Math.round((latestGross.value / latestRevenue.value) * 1000) / 10
-      : null;
+      const revenueYoY = latestRevenue && priorRevenue
+        ? calcYoY(latestRevenue.value, priorRevenue.value)
+        : null;
+      const grossMarginPct = latestRevenue && latestGross
+        ? Math.round((latestGross.value / latestRevenue.value) * 1000) / 10
+        : null;
+      const isQuarterly = latestRevenue?.form === "10-Q";
+      const annualRevenue = isQuarterly ? latestRevenue.value * 4 : latestRevenue?.value;
 
-    // Annualize quarterly revenue if needed
-    const isQuarterly = latestRevenue?.form === "10-Q";
-    const annualRevenue = isQuarterly ? latestRevenue.value * 4 : latestRevenue?.value;
+      const financials = {
+        revenue: annualRevenue,
+        revenueRaw: latestRevenue?.value,
+        revenueYoY,
+        grossMarginPct,
+        operatingIncome: latestOpInc?.value,
+        cash: latestCash?.value,
+        netIncome: netIncome[0]?.value,
+        latestPeriod: latestRevenue?.end,
+        latestFiled: latestRevenue?.filed,
+        latestForm: latestRevenue?.form,
+        isQuarterly,
+      };
 
-    const financials = {
-      revenue: annualRevenue,
-      revenueRaw: latestRevenue?.value,
-      revenueYoY,
-      grossMarginPct,
-      operatingIncome: latestOpInc?.value,
-      cash: latestCash?.value,
-      netIncome: netIncome[0]?.value,
-      latestPeriod: latestRevenue?.end,
-      latestFiled: latestRevenue?.filed,
-      latestForm: latestRevenue?.form,
-      isQuarterly,
-    };
-
-    // 4. Build financial summary string for Claude
-    const financialSummary = `
+      // 4. Build financial summary for Claude
+      const financialSummary = `
 Company: ${companyName} (${ticker})
 Industry/SIC: ${sicDesc} (${sic})
 State of Incorporation: ${stateOfInc}
@@ -258,78 +384,80 @@ Latest ${financials.latestForm} period ending ${financials.latestPeriod} (filed 
 - Gross Margin: ${grossMarginPct !== null ? `${grossMarginPct}%` : "N/A"}
 - Operating Income: ${latestOpInc ? `$${(latestOpInc.value / 1e6).toFixed(0)}M` : "N/A"}
 - Cash & Equivalents: ${latestCash ? `$${(latestCash.value / 1e6).toFixed(0)}M` : "N/A"}
+Recent quarterly revenues: ${revenues.slice(0, 4).map((r) => `$${(r.value / 1e6).toFixed(0)}M (${r.end})`).join(", ")}`.trim();
 
-Recent quarterly revenues: ${revenues.slice(0, 4).map((r) => `$${(r.value / 1e6).toFixed(0)}M (${r.end})`).join(", ")}
-    `.trim();
+      // 5. Run Yahoo Finance + Claude in parallel
+      // Claude schema always includes epsEstimates/analystRating as AI fallback;
+      // if Yahoo succeeds those Claude fields are overridden by real data.
+      const secSchema = buildIntelligenceSchema({ hasYahoo: false, isPrivate: false });
+      const claudePrompt = `You are an expert enterprise procurement strategist with deep expertise in vendor negotiations and enterprise software.
 
-    // 5. Claude analysis for negotiation intelligence
-    const claudePrompt = `You are an expert enterprise procurement strategist with deep expertise in vendor negotiations.
-
-A procurement professional is preparing to negotiate or renew a contract with this vendor. Based on the SEC EDGAR financial data below, produce a structured negotiation intelligence report.
+A procurement professional is preparing to negotiate or renew a contract with this vendor. Based on the SEC EDGAR financial data below and your knowledge of this company, produce a comprehensive intelligence report.
 
 ${financialSummary}
 
 Respond ONLY in valid JSON matching this exact structure:
-{
-  "posture": "low" | "moderate" | "high",
-  "postureScore": <0-100, where 0=seller has all power, 100=buyer has all power>,
-  "postureLabel": "<2-4 word label like 'Moderate Leverage' or 'Strong Buyer Position'>",
-  "narrative": "<2-3 sentences explaining the overall negotiation dynamic based on the financials>",
-  "topAction": "<1 specific, tactical action the buyer should take before entering renewal negotiations>",
-  "levers": [
-    { "priority": "high" | "medium" | "low", "title": "<lever title>", "detail": "<2-3 sentences explaining the lever and how to use it>", "action": "<specific action to take>" }
-  ],
-  "risks": [
-    { "priority": "high" | "medium" | "low", "title": "<risk title>", "detail": "<2-3 sentences explaining the risk>", "action": "<how to mitigate>" }
-  ],
-  "opportunities": [
-    { "priority": "high" | "medium" | "low", "title": "<opportunity title>", "detail": "<2-3 sentences explaining the opportunity>", "action": "<how to capture it>" }
-  ]
-}
+${secSchema}
 
-Include exactly 3 items in each of levers, risks, and opportunities. Keep each "detail" field to 1-2 sentences max and "action" to 1 sentence. Base everything on the actual financial data. Do not invent facts not supported by the data. Respond with ONLY the JSON object, no other text.`;
+${SCHEMA_RULES}
+- Base financials analysis on the actual SEC data; use your knowledge for products/segments/executives
+- For epsEstimates: provide actual/estimated quarterly EPS for last 4 quarters in chronological order (oldest first), period as YYYY-MM-DD
+- For analystRating: provide your best estimate based on financial health, growth, and market position`;
 
-    const aiResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: claudePrompt }],
-    });
+      const [yahooData, aiResponse] = await Promise.all([
+        fetchYahooData(ticker),
+        anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 4096,
+          messages: [{ role: "user", content: claudePrompt }],
+        }),
+      ]);
 
-    const rawText = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : "";
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Claude returned invalid JSON");
+      const rawText = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : "";
+      const intelligence = parseClaudeJSON(rawText);
 
-    // Attempt to repair truncated JSON by closing open arrays/objects
-    let jsonStr = jsonMatch[0];
-    let intelligence: Record<string, unknown>;
-    try {
-      intelligence = JSON.parse(jsonStr);
-    } catch {
-      // Count unclosed brackets and close them
-      const opens = (jsonStr.match(/\[/g) || []).length;
-      const closes = (jsonStr.match(/\]/g) || []).length;
-      const objOpens = (jsonStr.match(/\{/g) || []).length;
-      const objCloses = (jsonStr.match(/\}/g) || []).length;
-      // Strip trailing comma/incomplete entry then close
-      jsonStr = jsonStr.replace(/,\s*$/, "").replace(/,\s*\{[^}]*$/, "");
-      jsonStr += "]".repeat(Math.max(0, opens - closes));
-      jsonStr += "}".repeat(Math.max(0, objOpens - objCloses));
-      intelligence = JSON.parse(jsonStr);
+      // Build marketMetrics: prefer live Yahoo data, fall back to Claude's AI estimates
+      const marketMetrics = yahooData
+        ? {
+            eps: yahooData.eps,
+            analystRating: yahooData.analyst
+              ? { ...yahooData.analyst, source: "yahoo" as const }
+              : null,
+            source: "yahoo" as const,
+          }
+        : (intelligence.epsEstimates || intelligence.analystRating)
+        ? {
+            eps: (intelligence.epsEstimates as any[]) ?? [],
+            analystRating: intelligence.analystRating
+              ? { ...(intelligence.analystRating as object), source: "ai" as const }
+              : null,
+            source: "ai" as const,
+          }
+        : null;
+
+      responseData = {
+        source: "sec",
+        company: { name: companyName, ticker, cik, industry: sicDesc, stateOfInc, fiscalYearEnd },
+        financials,
+        intelligence,
+        marketMetrics,
+      };
+
+    } catch (edgarError) {
+      // ── EDGAR failed → fall back to AI-only analysis ──────────
+      console.log(`EDGAR lookup failed for "${company}", falling back to AI analysis:`, edgarError instanceof Error ? edgarError.message : edgarError);
+
+      const intelligence = await generateAIOnlyIntelligence(company);
+
+      responseData = {
+        source: "ai",
+        company: { name: company, ticker: null, cik: null, industry: null, stateOfInc: null, fiscalYearEnd: null },
+        financials: null,
+        intelligence,
+      };
     }
 
-    const responseData = {
-      company: {
-        name: companyName,
-        ticker,
-        cik,
-        industry: sicDesc,
-        stateOfInc,
-      },
-      financials,
-      intelligence,
-    };
-
-    // Write to cache (upsert so Refresh button overwrites stale entry)
+    // Write to cache
     await supabase.from("market_intelligence_cache").upsert(
       { query_key: queryKey, data: responseData, cached_at: new Date().toISOString() },
       { onConflict: "query_key" }

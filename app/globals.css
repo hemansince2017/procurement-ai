@@ -1,27 +1,74 @@
 @import "tailwindcss";
 
 @theme {
+  /* Vercel design tokens */
+  --color-vercel-black: #171717;
+  --color-vercel-white: #ffffff;
+
+  /* Risk semantic colors */
   --color-risk-high: #dc2626;
   --color-risk-medium: #ea580c;
   --color-risk-low: #16a34a;
   --color-risk-neutral: #6b7280;
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), Arial, "Apple Color Emoji", "Segoe UI Emoji", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Monaco, "Courier New", monospace;
 }
 
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "liga" 1;
+  color: #171717;
+  background: #ffffff;
 }
 
+/* ─── Vercel shadow-as-border system ─────────────────────────── */
+
+/* Ring border — replaces CSS border on cards/inputs */
+.shadow-border {
+  box-shadow: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px;
+}
+
+/* Lighter ring — for tabs, images */
+.shadow-border-light {
+  box-shadow: rgb(235, 235, 235) 0px 0px 0px 1px;
+}
+
+/* Full card shadow: ring + subtle lift + inner fafafa highlight */
+.shadow-card {
+  box-shadow:
+    rgba(0, 0, 0, 0.08) 0px 0px 0px 1px,
+    rgba(0, 0, 0, 0.04) 0px 2px 2px,
+    #fafafa 0px 0px 0px 1px;
+}
+
+/* Hover intensification */
+.shadow-card-hover {
+  transition: box-shadow 150ms ease;
+}
+.shadow-card-hover:hover {
+  box-shadow:
+    rgba(0, 0, 0, 0.10) 0px 0px 0px 1px,
+    rgba(0, 0, 0, 0.06) 0px 4px 8px -2px,
+    #fafafa 0px 0px 0px 1px;
+}
+
+/* ─── Focus ring ──────────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid hsla(212, 100%, 48%, 1);
+  outline-offset: 2px;
+}
+
+/* ─── Print ───────────────────────────────────────────────────── */
 @media print {
   @page { margin: 1.2cm 1.5cm; size: A4; }
   body { background: white !important; font-size: 11px; }
   .print\:hidden { display: none !important; }
-  header { border-bottom: 1px solid #e5e7eb !important; margin-bottom: 12px; }
+  header { box-shadow: none !important; border-bottom: 1px solid #ebebeb !important; margin-bottom: 12px; }
   main { padding-top: 0 !important; }
-  /* Prevent cards splitting across pages */
   .rounded-lg, .rounded-md { break-inside: avoid; }
-  /* Force backgrounds to print */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
